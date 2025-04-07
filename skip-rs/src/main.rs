@@ -1,10 +1,10 @@
 use skip_rs::SkipList;
 
 fn main() {
-    let skip_list = SkipList::<usize>::new(4);
-    // skip_list.insert(10);
-    // skip_list.insert(20);
-    // skip_list.insert(30);
+    let mut skip_list = SkipList::<usize>::new(5);
+    for i in 0..50 {
+        skip_list.insert(i);
+    }
 
-    println!("Skip List: {}", skip_list);
+    println!("Skip List:\n{}", skip_list);
 }
