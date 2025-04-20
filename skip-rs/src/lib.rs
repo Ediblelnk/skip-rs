@@ -9,7 +9,8 @@ type Link<K, V> = Rc<RefCell<Node<K, V>>>;
 #[derive(Debug, Clone)]
 pub struct SkipList<K: Clone, V: Sized> {
     head: Link<K, V>,
-    max_level: usize,
+    length: usize,
+    level_fixed: bool,
     p: f64,
 }
 
@@ -21,24 +22,56 @@ pub struct Node<K, V> {
     distance: Vec<usize>,
 }
 
-impl<K: Clone + PartialOrd + Debug, V: Sized> SkipList<K, V> {
-    pub fn new() -> Self {
-        let head = Rc::new(RefCell::new(Node {
-            key: unsafe { std::mem::zeroed() },
-            value: unsafe { std::mem::zeroed() },
-            forwards: vec![None; 2],
-            distance: vec![0; 2],
-        }));
+impl<K: Default, V: Default> Default for Node<K, V> {
+    fn default() -> Self {
+        Node {
+            key: K::default(),
+            value: V::default(),
+            forwards: vec![None],
+            distance: vec![1],
+        }
+    }
+}
 
+impl<K: Clone + Ord + Debug + Default, V: Default> SkipList<K, V> {
+    pub fn new() -> Self {
         SkipList {
-            head,
-            max_level: 2,
+            head: Rc::new(RefCell::new(Node::default())),
+            length: 0,
+            level_fixed: false,
             p: DEFAULT_P,
         }
     }
 
     pub fn insert(&mut self, key: K, value: V) {
+        self.length += 1;
         let level = self.determine_level();
+        let mut current = self.head.clone();
+        let mut update: Vec<(Link<K, V>, usize)> = vec![(self.head.clone(), 0); level];
+        let mut position: usize = 0;
+
+        for i in (0..self.max_level()).rev() {
+            loop {
+                let next = current.borrow().forwards[i].clone();
+                match next {
+                    Some(node) if node.borrow().key < key => {
+                        position += current.borrow().distance[i];
+                        current = node;
+                    }
+                    _ => break,
+                }
+            }
+
+            if i < level {
+                update[i].0 = current.clone();
+                update[i].1 = position;
+            } else {
+                current.borrow_mut().distance[i] += 1;
+            }
+        }
+
+        position += 1;
+
         let new_node = Rc::new(RefCell::new(Node {
             key: key.clone(),
             value,
@@ -46,39 +79,38 @@ impl<K: Clone + PartialOrd + Debug, V: Sized> SkipList<K, V> {
             distance: vec![1; level],
         }));
 
-        let mut current = self.head.clone();
-        let mut update: Vec<Option<Link<K, V>>> = vec![None; level];
+        for i in 0..level {
+            new_node.borrow_mut().forwards[i] = update[i].0.borrow().forwards[i].clone();
+            update[i].0.borrow_mut().forwards[i] = Some(new_node.clone());
 
-        for i in (0..self.max_level).rev() {
+            let d = position - update[i].1;
+            new_node.borrow_mut().distance[i] = update[i].0.borrow().distance[i] - d + 1;
+            update[i].0.borrow_mut().distance[i] = d;
+        }
+    }
+
+    pub fn edit<F>(&self, key: K, mut modify: F) -> Result<(), String>
+    where
+        F: FnMut(&mut V),
+    {
+        let mut current = self.head.clone();
+        for i in (0..self.max_level()).rev() {
             loop {
                 let next = current.borrow().forwards[i].clone();
-                if i < level {
-                    update[i] = Some(current.clone());
-                }
                 match next {
-                    Some(node) => {
-                        if node.borrow().key < key {
-                            current = node;
-                        } else {
-                            break;
-                        }
+                    Some(node) if node.borrow().key <= key => {
+                        current = node;
                     }
-                    None => break,
+                    _ => break,
                 }
             }
         }
 
-        for i in 0..level {
-            match update[i].clone() {
-                Some(prev) => {
-                    new_node.borrow_mut().forwards[i] = prev.borrow().forwards[i].clone();
-                    prev.borrow_mut().forwards[i] = Some(new_node.clone());
-                }
-                None => {
-                    new_node.borrow_mut().forwards[i] = self.head.borrow().forwards[i].clone();
-                    self.head.borrow_mut().forwards[i] = Some(new_node.clone());
-                }
-            }
+        if current.borrow().key == key {
+            modify(&mut current.borrow_mut().value);
+            Ok(())
+        } else {
+            Err(format!("Key {:?} not found", key))
         }
     }
 }
@@ -86,32 +118,38 @@ impl<K: Clone + PartialOrd + Debug, V: Sized> SkipList<K, V> {
 impl<K: Clone, V: Sized> SkipList<K, V> {
     fn determine_level(&mut self) -> usize {
         let mut rng = SmallRng::from_os_rng();
-        let mut level = 1usize;
-        while rng.random_bool(self.p) {
+        let mut level = 1;
+        while level <= self.max_level() && rng.random_bool(self.p) {
             level += 1;
-            if level > self.max_level {
-                self.increase_level();
-                break;
-            }
+        }
+        if level > self.max_level() && !self.level_fixed {
+            self.head.borrow_mut().forwards.push(None);
+            self.head.borrow_mut().distance.push(self.length);
         }
         level
     }
 
-    fn increase_level(&mut self) {
-        self.max_level += 1;
-        self.head.borrow_mut().forwards.push(None);
-        self.head.borrow_mut().distance.push(0);
+    pub fn fix_level(&mut self) {
+        self.level_fixed = true;
+    }
+
+    pub fn unfix_level(&mut self) {
+        self.level_fixed = false;
     }
 }
 
 impl<K: Clone, V> SkipList<K, V> {
     pub fn max_level(&self) -> usize {
-        self.max_level
+        self.head.borrow().forwards.len()
+    }
+    pub fn length(&self) -> usize {
+        self.length
     }
     pub fn p(&self) -> f64 {
         self.p
     }
     pub fn set_p(&mut self, p: f64) {
+        let p = p.clamp(0., 1.);
         self.p = p;
     }
 }
@@ -122,28 +160,26 @@ where
     V: Display,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for i in (0..self.max_level).rev() {
-            write!(f, "L{}: ", i)?;
+        for i in (0..self.max_level()).rev() {
+            write!(f, "L{}|", i)?;
             let mut current = self.head.clone();
+            for _ in 0..(current.borrow().distance[i] - 1) {
+                write!(f, "--------")?;
+            }
             loop {
                 let next = current.borrow().forwards[i].clone();
                 match next {
                     Some(node) => {
-                        write!(
-                            f,
-                            "[{}]:{{{}}} -|{}|-> ",
-                            node.borrow().key,
-                            node.borrow().value,
-                            node.borrow().distance[i]
-                        )?;
+                        write!(f, "-|{:>2}:{:>2}|", node.borrow().key, node.borrow().value)?;
+                        for _ in 0..(node.borrow().distance[i] - 1) {
+                            write!(f, "--------")?;
+                        }
                         current = node;
                     }
-                    None => {
-                        write!(f, "||\n")?;
-                        break;
-                    }
+                    None => break,
                 }
             }
+            write!(f, "-|\n")?;
         }
         Ok(())
     }
