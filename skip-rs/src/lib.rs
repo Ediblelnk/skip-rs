@@ -6,6 +6,19 @@ use std::rc::Rc;
 const DEFAULT_P: f64 = 0.5;
 type Link<K, V> = Rc<RefCell<Node<K, V>>>;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum SkipListError {
+    KeyNotFound,
+}
+
+impl std::fmt::Display for SkipListError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SkipListError::KeyNotFound => write!(f, "Key not found"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SkipList<K: Clone, V: Sized> {
     head: Link<K, V>,
@@ -89,7 +102,7 @@ impl<K: Clone + Ord + Debug + Default, V: Default> SkipList<K, V> {
         }
     }
 
-    pub fn edit<F>(&self, key: K, mut modify: F) -> Result<(), String>
+    pub fn edit<F>(&mut self, key: K, mut modify: F) -> Result<(), SkipListError>
     where
         F: FnMut(&mut V),
     {
@@ -110,7 +123,42 @@ impl<K: Clone + Ord + Debug + Default, V: Default> SkipList<K, V> {
             modify(&mut current.borrow_mut().value);
             Ok(())
         } else {
-            Err(format!("Key {:?} not found", key))
+            Err(SkipListError::KeyNotFound)
+        }
+    }
+
+    pub fn remove(&mut self, key: K) -> Result<(), SkipListError> {
+        if self.length == 0 {
+            return Err(SkipListError::KeyNotFound);
+        }
+
+        self.length -= 1;
+        let mut current = self.head.clone();
+        let mut update: Vec<(Link<K, V>, usize)> = vec![(self.head.clone(), 0); self.max_level()];
+        let mut position: usize = 0;
+
+        for i in (0..self.max_level()).rev() {
+            loop {
+                let next = current.borrow().forwards[i].clone();
+                match next {
+                    Some(node) if node.borrow().key < key => {
+                        position += current.borrow().distance[i];
+                        current = node;
+                    }
+                    _ => break,
+                }
+            }
+            update[i].0 = current.clone();
+            update[i].1 = position;
+        }
+
+        if current.borrow().key == key {
+            // for i in 0..self.max_level() {
+
+            // }
+            Ok(())
+        } else {
+            Err(SkipListError::KeyNotFound)
         }
     }
 }
@@ -164,15 +212,15 @@ where
             write!(f, "L{}|", i)?;
             let mut current = self.head.clone();
             for _ in 0..(current.borrow().distance[i] - 1) {
-                write!(f, "--------")?;
+                write!(f, "----------")?;
             }
             loop {
                 let next = current.borrow().forwards[i].clone();
                 match next {
                     Some(node) => {
-                        write!(f, "-|{:>2}:{:>2}|", node.borrow().key, node.borrow().value)?;
+                        write!(f, "-|{:>3}:{:>3}|", node.borrow().key, node.borrow().value)?;
                         for _ in 0..(node.borrow().distance[i] - 1) {
-                            write!(f, "--------")?;
+                            write!(f, "----------")?;
                         }
                         current = node;
                     }
