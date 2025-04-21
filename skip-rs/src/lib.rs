@@ -127,38 +127,52 @@ impl<K: Clone + Ord + Debug + Default, V: Default> SkipList<K, V> {
         }
     }
 
+    // pub fn edit_by_index<F>(&mut self, index: usize, mut modify: F) -> Result<(), SkipListError> {
+    //     Ok(())
+    // }
+
     pub fn remove(&mut self, key: K) -> Result<(), SkipListError> {
         if self.length == 0 {
             return Err(SkipListError::KeyNotFound);
         }
 
-        self.length -= 1;
         let mut current = self.head.clone();
-        let mut update: Vec<(Link<K, V>, usize)> = vec![(self.head.clone(), 0); self.max_level()];
-        let mut position: usize = 0;
+        let mut update: Vec<Link<K, V>> = vec![self.head.clone(); self.max_level()];
 
         for i in (0..self.max_level()).rev() {
             loop {
                 let next = current.borrow().forwards[i].clone();
                 match next {
                     Some(node) if node.borrow().key < key => {
-                        position += current.borrow().distance[i];
                         current = node;
                     }
                     _ => break,
                 }
             }
-            update[i].0 = current.clone();
-            update[i].1 = position;
+            update[i] = current.clone();
         }
 
-        if current.borrow().key == key {
-            // for i in 0..self.max_level() {
+        let next = current.borrow().forwards[0].clone();
+        match next {
+            Some(node) if node.borrow().key == key => {
+                for i in 0..self.max_level() {
+                    match i < node.borrow().forwards.len() {
+                        true => {
+                            update[i].borrow_mut().forwards[i] = node.borrow().forwards[i].clone();
+                            update[i].borrow_mut().distance[i] += node.borrow().distance[i] - 1;
+                        }
+                        false => {
+                            update[i].borrow_mut().distance[i] -= 1;
+                        }
+                    }
+                }
 
-            // }
-            Ok(())
-        } else {
-            Err(SkipListError::KeyNotFound)
+                self.length -= 1;
+                self.trim();
+
+                Ok(())
+            }
+            _ => Err(SkipListError::KeyNotFound),
         }
     }
 }
@@ -175,6 +189,15 @@ impl<K: Clone, V: Sized> SkipList<K, V> {
             self.head.borrow_mut().distance.push(self.length);
         }
         level
+    }
+
+    fn trim(&mut self) {
+        for i in (0..self.max_level()).rev() {
+            if self.head.borrow().forwards[i].is_none() {
+                self.head.borrow_mut().forwards.pop();
+                self.head.borrow_mut().distance.pop();
+            }
+        }
     }
 
     pub fn fix_level(&mut self) {
