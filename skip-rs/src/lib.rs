@@ -7,17 +7,9 @@ const DEFAULT_P: f64 = 0.5;
 type Link<K, V> = Rc<RefCell<Node<K, V>>>;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum SkipListError {
-    KeyNotFound,
-}
-
-impl std::fmt::Display for SkipListError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SkipListError::KeyNotFound => write!(f, "Key not found"),
-        }
-    }
-}
+pub struct KeyNotFound;
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutOfBounds;
 
 #[derive(Debug, Clone)]
 pub struct SkipList<K: Clone, V: Sized> {
@@ -46,13 +38,22 @@ impl<K: Default, V: Default> Default for Node<K, V> {
     }
 }
 
-impl<K: Clone + Ord + Debug + Default, V: Default> SkipList<K, V> {
+impl<K: Clone + Ord + Default, V: Clone + Default> SkipList<K, V> {
     pub fn new() -> Self {
         SkipList {
             head: Rc::new(RefCell::new(Node::default())),
             length: 0,
             level_fixed: false,
             p: DEFAULT_P,
+        }
+    }
+
+    pub fn new_with_p(p: f64) -> Self {
+        SkipList {
+            head: Rc::new(RefCell::new(Node::default())),
+            length: 0,
+            level_fixed: false,
+            p: p.clamp(0., 1.),
         }
     }
 
@@ -102,7 +103,7 @@ impl<K: Clone + Ord + Debug + Default, V: Default> SkipList<K, V> {
         }
     }
 
-    pub fn edit<F>(&mut self, key: K, mut modify: F) -> Result<(), SkipListError>
+    pub fn edit<F>(&mut self, key: K, mut modify: F) -> Result<(), KeyNotFound>
     where
         F: FnMut(&mut V),
     {
@@ -123,17 +124,43 @@ impl<K: Clone + Ord + Debug + Default, V: Default> SkipList<K, V> {
             modify(&mut current.borrow_mut().value);
             Ok(())
         } else {
-            Err(SkipListError::KeyNotFound)
+            Err(KeyNotFound)
         }
     }
 
-    // pub fn edit_by_index<F>(&mut self, index: usize, mut modify: F) -> Result<(), SkipListError> {
-    //     Ok(())
-    // }
+    pub fn edit_at_index<F>(&mut self, index: usize, mut modify: F) -> Result<(), OutOfBounds>
+    where
+        F: FnMut(&mut V),
+    {
+        let mut current = self.head.clone();
+        let mut position: usize = 0;
 
-    pub fn remove(&mut self, key: K) -> Result<(), SkipListError> {
+        if index >= self.length {
+            return Err(OutOfBounds);
+        }
+
+        let index = index + 1; // Adjust for 1-based index
+
+        for i in (0..self.max_level()).rev() {
+            loop {
+                let next = current.borrow().forwards[i].clone();
+                match next {
+                    Some(node) if position + current.borrow().distance[i] <= index => {
+                        position += current.borrow().distance[i];
+                        current = node;
+                    }
+                    _ => break,
+                }
+            }
+        }
+
+        modify(&mut current.borrow_mut().value);
+        Ok(())
+    }
+
+    pub fn pop(&mut self, key: K) -> Result<(K, V), KeyNotFound> {
         if self.length == 0 {
-            return Err(SkipListError::KeyNotFound);
+            return Err(KeyNotFound);
         }
 
         let mut current = self.head.clone();
@@ -170,10 +197,125 @@ impl<K: Clone + Ord + Debug + Default, V: Default> SkipList<K, V> {
                 self.length -= 1;
                 self.trim();
 
-                Ok(())
+                Ok((node.borrow().key.clone(), node.borrow().value.clone()))
             }
-            _ => Err(SkipListError::KeyNotFound),
+            _ => Err(KeyNotFound),
         }
+    }
+
+    pub fn pop_at_index(&mut self, index: usize) -> Result<(K, V), OutOfBounds> {
+        if self.length == 0 || index >= self.length {
+            return Err(OutOfBounds);
+        }
+
+        let index = index + 1; // Adjust for 1-based index
+
+        let mut current = self.head.clone();
+        let mut update: Vec<Link<K, V>> = vec![self.head.clone(); self.max_level()];
+        let mut position: usize = 0;
+
+        for i in (0..self.max_level()).rev() {
+            loop {
+                let next = current.borrow().forwards[i].clone();
+                match next {
+                    Some(node) if position + current.borrow().distance[i] < index => {
+                        position += current.borrow().distance[i];
+                        current = node;
+                    }
+                    _ => break,
+                }
+            }
+            update[i] = current.clone();
+        }
+
+        let next = current.borrow().forwards[0].clone();
+        match next {
+            Some(node) => {
+                for i in 0..self.max_level() {
+                    match i < node.borrow().forwards.len() {
+                        true => {
+                            update[i].borrow_mut().forwards[i] = node.borrow().forwards[i].clone();
+                            update[i].borrow_mut().distance[i] += node.borrow().distance[i] - 1;
+                        }
+                        false => {
+                            update[i].borrow_mut().distance[i] -= 1;
+                        }
+                    }
+                }
+
+                self.length -= 1;
+                self.trim();
+
+                Ok((node.borrow().key.clone(), node.borrow().value.clone()))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn peek_at_index(&self, index: usize) -> Result<(K, V), OutOfBounds> {
+        if self.length == 0 || index >= self.length {
+            return Err(OutOfBounds);
+        }
+
+        let index = index + 1; // Adjust for 1-based index
+
+        let mut current = self.head.clone();
+        let mut position: usize = 0;
+
+        for i in (0..self.max_level()).rev() {
+            loop {
+                let next = current.borrow().forwards[i].clone();
+                match next {
+                    Some(node) if position + current.borrow().distance[i] <= index => {
+                        position += current.borrow().distance[i];
+                        current = node;
+                    }
+                    _ => break,
+                }
+            }
+        }
+
+        let key = current.borrow().key.clone();
+        let value = current.borrow().value.clone();
+        Ok((key, value))
+    }
+
+    pub fn pop_front(&mut self) -> Option<(K, V)> {
+        if self.length == 0 {
+            return None;
+        }
+
+        Some(self.pop_at_index(0).unwrap())
+    }
+
+    pub fn pop_back(&mut self) -> Option<(K, V)> {
+        if self.length == 0 {
+            return None;
+        }
+
+        Some(self.pop_at_index(self.length - 1).unwrap())
+    }
+
+    pub fn remove(&mut self, key: K) -> Result<(), KeyNotFound> {
+        match self.pop(key) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn remove_at_index(&mut self, index: usize) -> Result<(), OutOfBounds> {
+        match self.pop_at_index(index) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn clear(&mut self) -> &mut Self {
+        self.head.borrow_mut().forwards.clear();
+        self.head.borrow_mut().distance.clear();
+        self.length = 0;
+
+        self
     }
 }
 
@@ -213,12 +355,27 @@ impl<K: Clone, V> SkipList<K, V> {
     pub fn max_level(&self) -> usize {
         self.head.borrow().forwards.len()
     }
+
     pub fn length(&self) -> usize {
         self.length
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.length == 0
+    }
+
+    pub fn is_fixed(&self) -> bool {
+        self.level_fixed
+    }
+
+    pub fn set_fixed(&mut self, fixed: bool) {
+        self.level_fixed = fixed;
+    }
+
     pub fn p(&self) -> f64 {
         self.p
     }
+
     pub fn set_p(&mut self, p: f64) {
         let p = p.clamp(0., 1.);
         self.p = p;
