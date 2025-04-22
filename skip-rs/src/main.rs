@@ -108,19 +108,19 @@ fn main() {
                 }
             }
             Ok(5) => {
-                print!("Clearing the skip list...");
+                print!("\nClearing the skip list...");
                 skip_list.clear();
                 println!("Done.");
             }
             Ok(6) => {
-                println!("Skip list contents:\n{}", skip_list);
+                println!("\nSkip list contents:\n{}", skip_list);
             }
             Ok(7) => {
-                println!("Exiting...");
+                println!("\nExiting...");
                 break;
             }
             _ => {
-                println!("Invalid choice. Please try again.");
+                println!("\nInvalid choice. Please try again.");
             }
         }
     }

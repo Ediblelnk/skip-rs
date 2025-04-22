@@ -32,8 +32,8 @@ impl<K: Default, V: Default> Default for Node<K, V> {
         Node {
             key: K::default(),
             value: V::default(),
-            forwards: vec![None],
-            distance: vec![1],
+            forwards: Vec::new(),
+            distance: Vec::new(),
         }
     }
 }
