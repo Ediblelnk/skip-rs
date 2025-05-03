@@ -12,8 +12,9 @@ fn main() {
         println!("3. Pop a key-value pair by index");
         println!("4. Peek the key-value pair at a given index");
         println!("5. Clear the skip list");
-        println!("6. Print the skip list");
-        println!("7. Exit");
+        println!("6. Change the probability of the skip list");
+        println!("7. Print the skip list");
+        println!("8. Exit");
         println!();
         println!("Enter your choice:");
         print!("> ");
@@ -113,9 +114,23 @@ fn main() {
                 println!("Done.");
             }
             Ok(6) => {
-                println!("\nSkip list contents:\n{}", skip_list);
+                print!("\nEnter a new probability (0.0 to 1.0): ");
+                io::stdout().flush().expect("Failed to flush stdout");
+                let mut prob = String::new();
+                io::stdin()
+                    .read_line(&mut prob)
+                    .expect("Failed to read input");
+                if let Ok(prob) = prob.trim().parse::<f64>() {
+                    skip_list.set_p(prob);
+                    println!("Probability set to {}", skip_list.p());
+                } else {
+                    println!("Invalid probability. It should be a number between 0.0 and 1.0.");
+                }
             }
             Ok(7) => {
+                println!("\nSkip list contents:\n{}", skip_list);
+            }
+            Ok(8) => {
                 println!("\nExiting...");
                 break;
             }
