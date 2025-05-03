@@ -377,8 +377,11 @@ impl<K: Clone, V> SkipList<K, V> {
     }
 
     pub fn set_p(&mut self, p: f64) {
-        let p = p.clamp(0., 1.);
-        self.p = p;
+        self.p = if p.is_finite() {
+            p.clamp(0., 1.)
+        } else {
+            DEFAULT_P
+        };
     }
 }
 
